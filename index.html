@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hagud — Four Blends, One Ritual</title>
+<title>Hagud — Aromatic Oil</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,450;0,9..144,600;0,9..144,700;1,9..144,450;1,9..144,600&family=Work+Sans:wght@300;400;500;600;700&display=swap');
 
@@ -1097,7 +1097,7 @@ footer{
       <button data-key="sports"><span class="bar"></span><span class="label">Sports</span><span class="pct"></span></button>
       <button data-key="roller"><span class="bar"></span><span class="label">Roller</span><span class="pct"></span></button>
     </div>
-    <p class="poll-note" id="pollNote">Loading live results…</p>
+    <p class="poll-note" id="pollNote">Tap a blend to vote &mdash; saved on this device only, not shared with other visitors.</p>
 
     <div class="hashtags">
       <span>#hagudfirstaromaticoilsinthephilippines</span>
@@ -1138,7 +1138,7 @@ footer{
     <div class="foot-top">
       <div>
         <div class="foot-mark wordmark">Hagud
-          <small>Supporting your everyday wellness &amp; self-care journey.</small>
+          <small>Not medical advice &mdash; a wellness &amp; self-care companion.</small>
         </div>
       </div>
       <div class="foot-links">
@@ -1267,91 +1267,68 @@ document.getElementById('year').textContent = new Date().getFullYear();
   update();
 })();
 
-// Poll — real, shared vote counts, persisted via the db capability
+// Poll — saved on this device (localStorage), so it works for every
+// visitor without requiring sign-in or organization access.
 (function(){
   const pollEl = document.getElementById('poll');
   const pollNote = document.getElementById('pollNote');
   if (!pollEl) return;
 
-  const counts = { classic: 0, citrus: 0, sports: 0, roller: 0 };
-  let myVote = null;
+  const STORE_KEY = 'hagud_poll_v1';
+  const defaults = { classic: 0, citrus: 0, sports: 0, roller: 0 };
+
+  function loadState(){
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return { counts: { ...defaults }, myVote: null };
+      const parsed = JSON.parse(raw);
+      return {
+        counts: { ...defaults, ...(parsed.counts || {}) },
+        myVote: parsed.myVote || null
+      };
+    } catch (e) {
+      return { counts: { ...defaults }, myVote: null };
+    }
+  }
+
+  function saveState(state){
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    } catch (e) { /* storage unavailable — vote just won't persist */ }
+  }
+
+  let state = loadState();
 
   function renderPoll(){
-    const total = Object.values(counts).reduce((a,b) => a+b, 0);
+    const total = Object.values(state.counts).reduce((a,b) => a+b, 0);
     pollEl.querySelectorAll('button').forEach(btn => {
       const key = btn.dataset.key;
-      const count = counts[key] || 0;
+      const count = state.counts[key] || 0;
       const pct = total ? Math.round((count/total)*100) : 0;
       btn.querySelector('.pct').textContent = total ? pct + '%' : '';
       btn.querySelector('.bar').style.width = total ? pct + '%' : '0%';
-      btn.classList.toggle('picked', key === myVote);
+      btn.classList.toggle('picked', key === state.myVote);
     });
     pollEl.classList.toggle('voted', total > 0);
   }
 
-  async function init(){
-    if (!window.claude || typeof window.claude.use !== 'function'){
-      pollNote.textContent = "Live voting isn't available in this view.";
-      return;
-    }
-    const db = await window.claude.use('db');
-    const user = await window.claude.use('user');
-
-    if (!db){
-      pollNote.textContent = "Live voting isn't available in this view.";
-      return;
-    }
-
-    // Live shared tally: every viewer's own vote document, aggregated on the fly.
-    db.collection('votes').onSnapshot((snap) => {
-      const next = { classic: 0, citrus: 0, sports: 0, roller: 0 };
-      snap.docs.forEach((d) => {
-        const data = d.data();
-        const choice = data && data.choice;
-        if (choice in next) next[choice] += 1;
-      });
-      Object.assign(counts, next);
+  pollEl.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (key === state.myVote) return;
+      if (state.myVote){ state.counts[state.myVote] = Math.max(0, (state.counts[state.myVote] || 0) - 1); }
+      state.counts[key] = (state.counts[key] || 0) + 1;
+      state.myVote = key;
+      saveState(state);
       renderPoll();
-    }, () => {
-      pollNote.textContent = "Couldn't load live results right now.";
+      pollNote.textContent = "Thanks for voting! Saved on this device — reopen the page anytime to see your pick.";
     });
+  });
 
-    const uid = user ? await user.id() : null;
-    if (!uid){
-      pollNote.textContent = 'Sign in to vote — results below are live and shared with everyone who opens this page.';
-      return;
-    }
-
-    const voteDoc = db.collection('votes').doc(uid);
-    try {
-      const mine = await voteDoc.get();
-      if (mine.exists){
-        const data = mine.data();
-        myVote = data && data.choice;
-        renderPoll();
-      }
-    } catch(e) { /* no existing vote yet */ }
-
-    pollEl.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const key = btn.dataset.key;
-        if (key === myVote) return;
-        pollNote.textContent = 'Saving your vote…';
-        try {
-          await voteDoc.set({ choice: key, ts: Date.now() });
-          myVote = key;
-          renderPoll();
-          pollNote.textContent = 'Thanks for voting! Results are live and shared with everyone who opens this page.';
-        } catch (e) {
-          pollNote.textContent = "Your vote couldn't be saved — please try again.";
-        }
-      });
-    });
-
-    pollNote.textContent = 'Tap a blend to vote — results are live and shared with everyone who opens this page.';
-  }
-
-  init();
+  pollNote.textContent = state.myVote
+    ? "You've already voted on this device — tap a blend to change your pick."
+    : "Tap a blend to vote — saved on this device only, not shared with other visitors.";
+  renderPoll();
 })();
 </script>
 
